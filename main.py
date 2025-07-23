@@ -14,7 +14,7 @@ from cost import Cost
 
 
 # # Load Excel file
-file_path = "pidsg25-02.xlsx"
+file_path = "pidsg25-02_historical.xlsx"
 xls = pd.ExcelFile(file_path)
 
 # Define parameters for all supported distributions
@@ -120,6 +120,14 @@ print("Objective Value:", obj_val)
 print(df_result)
 
 order_placed, order_arr = extract_order_matrices(df_result)
+# Replace second column of order_placed
+# Convert dict to array
+raw_orders_s2_array = np.array([raw_orders_s2[k] for k in sorted(raw_orders_s2.keys())])
+
+# Then assign
+order_placed.iloc[:, 1] = raw_orders_s2_array
+
+
 
 plot_order_placement_bar(order_placed, start_date="2025-04-01")
 plot_price_distribution_band(price_df_s1, price_df_s2, start_date="2025-04-01")

@@ -5,6 +5,7 @@ import numpy as np
 # Load the Excel file
 # file_path = "price_pidsg.xlsx"  # update the path as needed
 file_path= 'pidsg25-02.xlsx'
+file_path= 'pidsg25-02_historical.xlsx'
 xls = pd.ExcelFile(file_path)
 
 # Read both sheets
@@ -50,7 +51,7 @@ df1 = pd.DataFrame(generated1)
 df2 = pd.DataFrame(generated2)
 
 # Save to Excel
-with pd.ExcelWriter("generated_price_vectors.xlsx") as writer:
+with pd.ExcelWriter("generated_price_vectors_hist.xlsx") as writer:
     df1.to_excel(writer, sheet_name="Generated_Sheet1", index=False)
     df2.to_excel(writer, sheet_name="Generated_Sheet2", index=False)
 

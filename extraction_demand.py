@@ -115,8 +115,8 @@ if __name__ == "__main__":
     for k, v in part_mapping.items():
         print(f"{k} → {v}")
 
-    print("\nUnmatched in Prediction (not found in Excel):", missing_in_pred)
-    print("Unmatched in Excel (not matched from Prediction):", missing_in_excel)
+    print("\nUnmatched in sales forecast (not found in APP):", missing_in_pred)
+    print("Unmatched in APP (not matched from sales forecast):", missing_in_excel)
 
     # diff_matrix = reconcile_monthly_forecast(monthly_matrix, df_excel)
     # # diff_matrix.to_csv('reconcile.csv')

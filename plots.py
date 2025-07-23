@@ -13,6 +13,7 @@ def plot_order_placement_bar(order_placement, start_date="2024-01-01"):
     start_date : str
         Start date in 'YYYY-MM-DD' format.
     """
+    order_placement= 31.104*order_placement
     T = order_placement.shape[0]
     time_index = pd.date_range(start=start_date, periods=T, freq='MS')  # month start
     order_placement.index = time_index.strftime('%b-%y')
