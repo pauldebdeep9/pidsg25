@@ -58,6 +58,6 @@ problem:
   seed: 42
   h: 5
   b: 20
-  I_0: 1000
+  I_0: 6000
   B_0: 0
   enforce_fixed_orders: true

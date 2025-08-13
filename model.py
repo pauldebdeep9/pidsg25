@@ -12,13 +12,19 @@ def solve_price_saa(fixed_demand,
                     b, 
                     I_0, 
                     B_0,
-                    fixed_orders_s2=None):
+                    fixed_orders_s2=None,
+                    time_index=None):
     
     T = len(fixed_demand)
+    if time_index is None:
+        time = list(range(len(fixed_demand)))
+    else:
+        time = time_index
+
     S = list(order_cost.keys())
     N = len(price_samples)
 
-    time = list(range(T))
+    # time = list(range(T))
     t_supplier_tprime = [(t, s, t_prime) for t in time for s in S for t_prime in time if t_prime >= t]
     t_supplier = [(t, s) for t in time for s in S]
 
