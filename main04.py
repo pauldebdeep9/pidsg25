@@ -1,40 +1,39 @@
+# main06.py — uses plot_price_and_orders_aligned to avoid shape mismatches
 
 import pandas as pd
 import numpy as np
 import yaml
+
 from dataclass import ProcurementConfig, ModelData
 from model import solve_price_saa
 from postprocess_order import extract_order_matrices
-from plots import (plot_order_placement_bar, 
-                   plot_price_distribution_band, 
-                   plot_price_and_orders, 
-                   plot_price_and_orders_deterministic)
+from plots import (
+    plot_order_placement_bar,
+    plot_price_distribution_band,
+    plot_price_and_orders_aligned,     # <— new aligned function
+    plot_price_and_orders_deterministic
+)
 from price_distributions import PriceDistributionGenerator
 from cost import Cost
 
-
-# # Load Excel file
-file_path = "pidsg25-02_historical.xlsx"
+# -------------------- Load Excel & config --------------------
+file_path = "pidsg25-04_historical.xlsx"
 xls = pd.ExcelFile(file_path)
 
-# Define parameters for all supported distributions
 all_distribution_params = {
-    "lognormal": {"mean1": 3.8, "sigma1": 0.25, "mean2": 4.0, "sigma2": 0.3},
-    "gamma": {"shape1": 2.0, "scale1": 22.0, "shape2": 2.5, "scale2": 25.0},
-    "normal": {"mean1": 45, "std1": 5, "mean2": 50, "std2": 6},
-    "pareto": {"alpha1": 3.0, "scale1": 40.0, "alpha2": 2.5, "scale2": 45.0},
-    "triangular": {"left1": 40, "mode1": 45, "right1": 50, "left2": 42, "mode2": 48, "right2": 55},
-    "weibull": {"a1": 1.5, "scale1": 50.0, "a2": 1.2, "scale2": 55.0},
-    "beta": {"a1": 2.0, "b1": 5.0, "scale1": 100, "a2": 2.5, "b2": 4.5, "scale2": 110}
+    "lognormal":   {"mean1": 3.8, "sigma1": 0.25, "mean2": 4.0, "sigma2": 0.3},
+    "gamma":       {"shape1": 2.0, "scale1": 22.0, "shape2": 2.5, "scale2": 25.0},
+    "normal":      {"mean1": 45, "std1": 5, "mean2": 50, "std2": 6},
+    "pareto":      {"alpha1": 3.0, "scale1": 40.0, "alpha2": 2.5, "scale2": 45.0},
+    "triangular":  {"left1": 40, "mode1": 45, "right1": 50, "left2": 42, "mode2": 48, "right2": 55},
+    "weibull":     {"a1": 1.5, "scale1": 50.0, "a2": 1.2, "scale2": 55.0},
+    "beta":        {"a1": 2.0, "b1": 5.0, "scale1": 100, "a2": 2.5, "b2": 4.5, "scale2": 110},
 }
 
-# --- Load config ---
 with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 dist_name = config["distribution_name"]
-
-# dist_params = config["distribution"]["params"]
 distribution_params = all_distribution_params[dist_name]
 
 T = config["problem"]["T"]
@@ -46,62 +45,53 @@ I_0 = config["problem"]["I_0"]
 B_0 = config["problem"]["B_0"]
 enforce_fixed_orders = config["problem"]["enforce_fixed_orders"]
 
-# Load data sheets
-demand_df = pd.read_excel(xls, sheet_name="demand", index_col=0)
+# -------------------- Load sheets --------------------
+demand_df   = pd.read_excel(xls, sheet_name="demand",   index_col=0)
 supplier_df = pd.read_excel(xls, sheet_name="supplier")
 capacity_df = pd.read_excel(xls, sheet_name="capacity", index_col=0)
 
-
-
-# Generate synthetic price data
-generator = PriceDistributionGenerator(T=T, N= N, seed=42)
+# -------------------- Synthetic price data --------------------
+generator = PriceDistributionGenerator(T=T, N=N, seed=42)
 price_df_s1, price_df_s2 = generator.generate_by_name(dist=dist_name, params=distribution_params)
 
-
-# --- 1. Fixed deterministic demand
+# -------------------- Fixed demand & sets --------------------
 fixed_demand = demand_df["Actual"].dropna().values
-T = len(fixed_demand)
+T = len(fixed_demand)               # authoritative horizon
 S = supplier_df["supplier"].tolist()
-# N = price_df_s1.shape[1]
-
-# --- 2. Supplier lead times
 lead_time = dict(zip(supplier_df["supplier"], supplier_df["lead_time"]))
 lead_time_s2 = int(lead_time["s2"])
 
-# --- 3. Optional raw orders for s2 (order_time: quantity)
+# -------------------- Optional raw orders for s2 (by placement t) --------------------
 raw_orders_s2 = {
-    **{i: 4886.83127572017 for i in range(6)},
-    **{i: 2764.92 if i == 6 else 2767.36 for i in range(6, 12)}
+    **{i: 4886.83127572017 for i in range(3)},
+    **{i: 2764.92 if i == 3 else 2767.36 for i in range(3, 9)}
 }
 
-
-enforce_fixed_orders = True  # Toggle
-fixed_orders_s2 = {
-    (t, t + lead_time_s2): q
-    for t, q in raw_orders_s2.items()
-    if t + lead_time_s2 < T
-} if enforce_fixed_orders else None
-
-
+fixed_orders_s2 = (
+    {(t, t + lead_time_s2): q for t, q in raw_orders_s2.items() if t + lead_time_s2 < T}
+    if enforce_fixed_orders else None
+)
 
 print("Fixed orders with arrival time:", fixed_orders_s2)
 
-# --- 4. Construct price samples [(t,s) -> price] for each sample
+# -------------------- Price samples for SAA --------------------
 price_samples = []
 for i in range(N):
     sample_prices = {}
     for t in range(T):
-        sample_prices[(t, 's1')] = price_df_s1.iloc[t, i]
-        sample_prices[(t, 's2')] = price_df_s2.iloc[t, i]
+        sample_prices[(t, "s1")] = float(price_df_s1.iloc[t, i])
+        sample_prices[(t, "s2")] = float(price_df_s2.iloc[t, i])
     price_samples.append(sample_prices)
 
-# --- 5. Supplier order costs
+# -------------------- Costs & capacities --------------------
 order_cost = dict(zip(supplier_df["supplier"], supplier_df["order_cost"]))
 
-# --- 6. Time-supplier capacities
-capacity_dict = {(t, s): capacity_df.loc[t + 1, s] for t in range(T) for s in S}
+capacity_df = capacity_df.copy()
+capacity_df.index = range(len(capacity_df))  # reset to 0..T-1
+time_index_for_model = list(capacity_df.index)
+capacity_dict = {(t, s): float(capacity_df.loc[t, s]) for t in capacity_df.index for s in capacity_df.columns}
 
-# --- 7. Solve the price uncertainty SAA problem
+# -------------------- Solve SAA (price uncertainty) --------------------
 obj_val, df_result = solve_price_saa(
     fixed_demand=fixed_demand,
     price_samples=price_samples[:5],
@@ -112,42 +102,54 @@ obj_val, df_result = solve_price_saa(
     b=b,
     I_0=I_0,
     B_0=B_0,
-    fixed_orders_s2=fixed_orders_s2
+    fixed_orders_s2=fixed_orders_s2,
+    time_index=time_index_for_model,
 )
 
-# --- 8. Postprocess and plot
+# -------------------- Postprocess --------------------
 print("Objective Value:", obj_val)
 print(df_result)
 
 order_placed, order_arr = extract_order_matrices(df_result)
-# Replace second column of order_placed
-# Convert dict to array
-raw_orders_s2_array = np.array([raw_orders_s2[k] for k in sorted(raw_orders_s2.keys())])
 
-# Then assign
-order_placed.iloc[:, 1] = raw_orders_s2_array
+# Ensure order_placed is T×|S| and has supplier columns
+expected_cols = ["s1", "s2"]
+if list(order_placed.columns) != expected_cols and len(order_placed.columns) == 2:
+    order_placed.columns = expected_cols
+order_placed = (order_placed
+                .reindex(index=range(T), fill_value=0.0)
+                .reindex(columns=expected_cols, fill_value=0.0))
 
+# Overwrite s2 with aligned raw orders (placement-time t)
+s2_aligned = pd.Series(0.0, index=range(T))
+for t, q in raw_orders_s2.items():
+    if 0 <= t < T:
+        s2_aligned.iloc[t] = float(q)
+order_placed["s2"] = s2_aligned.values
 
+# -------------------- Plots --------------------
+START_DATE = "2025-07-01"
+plot_order_placement_bar(order_placed, start_date=START_DATE)
+plot_price_distribution_band(price_df_s1, price_df_s2, start_date=START_DATE)
 
-plot_order_placement_bar(order_placed, start_date="2025-07-01")
-plot_price_distribution_band(price_df_s1, price_df_s2, start_date="2025-07-01")
-plot_price_and_orders(price_df_s1, order_placed, supplier='s1', start_date="2025-07-01")
-plot_price_and_orders(price_df_s2, order_placed, supplier='s2', start_date="2025-07-01")
+# Use the new aligned function (only change here vs your old script)
+plot_price_and_orders_aligned(price_df_s1, order_placed, supplier="s1", start_date=START_DATE)
+plot_price_and_orders_aligned(price_df_s2, order_placed, supplier="s2", start_date=START_DATE)
 
-mean_price_s2 = price_df_s2.iloc[:, 0].values
-plot_price_and_orders_deterministic(mean_price_s2, order_placed, supplier='s2', start_date="2025-07-01")
+# Deterministic: pass a dated Series (kept same behavior)
+idx = pd.date_range(START_DATE, periods=T, freq="MS")
+mean_price_s2_series = pd.Series(price_df_s2.iloc[:T, 0].to_numpy(), index=idx)
+plot_price_and_orders_deterministic(mean_price_s2_series, order_placed, supplier="s2")
 
-print("Raw orders:", raw_orders_s2)
+# -------------------- Save & cost breakdown --------------------
+print("Raw orders (s2):", raw_orders_s2)
 print("Enforced fixed_orders_s2 (with arrival):", fixed_orders_s2)
 
-# --- 9. Save order_placed to CSV ---
 output_filename = f"order_placed_{dist_name}.csv"
 order_placed.to_csv(output_filename, index=True)
 print(f"Saved order_placed to {output_filename}")
 
-
-cost= Cost(df_result, order_placed, initial_inventory=I_0, demand=fixed_demand)
+cost = Cost(df_result, order_placed, initial_inventory=I_0, demand=fixed_demand)
 inv_cost, backlog_cost = cost.compute_inventory_backlog_cost(h, b)
-
-print('Storage cost', inv_cost)
-print('Backlog cost', backlog_cost)
+print("Storage cost", inv_cost)
+print("Backlog cost", backlog_cost)

@@ -17,7 +17,7 @@ from price_distributions import PriceDistributionGenerator
 from cost import Cost
 
 # -------------------- Load Excel & config --------------------
-file_path = "pidsg25-04_historical.xlsx"
+file_path = "pidsg25-05_historical.xlsx"
 xls = pd.ExcelFile(file_path)
 
 all_distribution_params = {
@@ -96,7 +96,7 @@ capacity_dict = {(t, s): float(capacity_df.loc[t, s]) for t in capacity_df.index
 # -------------------- Solve SAA (price uncertainty) --------------------
 obj_val, df_result = solve_price_saa(
     fixed_demand=fixed_demand,
-    price_samples=price_samples[:5],
+    price_samples=price_samples[:10],
     order_cost=order_cost,
     lead_time=lead_time,
     capacity_dict=capacity_dict,
@@ -136,7 +136,7 @@ for t, q in raw_orders_s2.items():
 order_placed["s2"] = s2_aligned.values  # safe: length T
 
 # -------------------- Plots (robust alignment) --------------------
-START_DATE = "2025-07-01"
+START_DATE = "2025-08-01"
 
 plot_order_placement_bar(order_placed, start_date=START_DATE)
 plot_price_distribution_band(price_df_s1, price_df_s2, start_date=START_DATE)
