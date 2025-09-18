@@ -569,6 +569,53 @@ def deterministic_reschedule_unhedged_L0_lock_prefix(
     }
     return out
 
+def compute_cost_breakdown(sol, price_df, h=5.0, b=None):
+    """
+    Compute total costs:
+      - Hedged purchase cost  = sum_t price_H[t] * hedged_orders[t]
+      - Unhedged purchase cost = sum_t price_U[t] * unhedged_orders[t]
+      - Storage (holding) cost = h * sum_t P[t]
+      - (optional) Backlog cost = b * sum_t N[t]   if b is provided and N exists
+
+    Works with:
+      - sol from deterministic_reschedule_with_capacity (has sol["Qhat"] with both cols)
+      - sol0 / solU (have sol["Q_fixed_hedged"], sol["Qhat_unhedged"])
+    """
+    # Pull orders depending on which solver produced 'sol'
+    if "Qhat" in sol:  # full matrix (both suppliers)
+        hedged_orders   = sol["Qhat"]["Hedged"].to_numpy(float)
+        unhedged_orders = sol["Qhat"]["Unhedged"].to_numpy(float)
+    else:  # unhedged-only variants
+        hedged_orders   = sol["Q_fixed_hedged"].to_numpy(float)
+        unhedged_orders = sol["Qhat_unhedged"].to_numpy(float)
+
+    # Prices
+    pH = price_df["Hedged"].to_numpy(float)
+    pU = price_df["Unhedged"].to_numpy(float)
+
+    # Storage (on-hand P)
+    P = sol["P"].to_numpy(float)
+
+    # Costs
+    hedged_cost    = float(np.sum(pH * hedged_orders))
+    unhedged_cost  = float(np.sum(pU * unhedged_orders))
+    storage_cost   = float(h * np.sum(P))
+
+    out = {
+        "hedged_cost": hedged_cost,
+        "unhedged_cost": unhedged_cost,
+        "storage_cost": storage_cost,
+        "total_without_backlog": hedged_cost + unhedged_cost + storage_cost,
+    }
+
+    # Optional backlog cost if requested and available
+    if b is not None and "N" in sol:
+        N = sol["N"].to_numpy(float)
+        backlog_cost = float(b * np.sum(N))
+        out["backlog_cost"] = backlog_cost
+        out["total_with_backlog"] = out["total_without_backlog"] + backlog_cost
+
+    return out
 
 
 # Choose your solution dict here (sol0 for L=0 model, or solU for the lead-time model)
@@ -679,15 +726,18 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
 
     plt.title("Orders from Suppliers (side-by-side bars) + Price (dotted, secondary axis)")
     plt.tight_layout()
-    plt.savefig(f"{prefix}-1_orders_prices.png", dpi=150)
+    # plt.savefig(f"{prefix}-1_orders_prices.png", dpi=150)
     plt.show()
 
     # =========================
     # ii) Storage (on-hand P)
     # =========================
+   # =========================
+    # ii) Storage (on-hand P)  — BAR
+    # =========================
     fig2, ax2 = plt.subplots(figsize=(10, 4))
-    ax2.plot(t, P, linewidth=2, label="Stock (on-hand P)")
-    ax2.axhline(s_max, linestyle="--", linewidth=1.5, label=f"Cap = {s_max:g}")
+    ax2.bar(t, P, color="tab:blue", alpha=0.7, label="Stock (on-hand P)")
+    ax2.axhline(s_max, linestyle="--", linewidth=1.5, color="red", label=f"Cap = {s_max:g}")
     ax2.set_ylabel("Units")
     ax2.grid(True, alpha=0.3); ax2.legend()
 
@@ -696,9 +746,8 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
 
     plt.title("Storage (On-hand P) vs Cap")
     plt.tight_layout()
-    plt.savefig(f"{prefix}-22_storage.png", dpi=150)
+    # plt.savefig(f"{prefix}-22_storage.png", dpi=150)
     plt.show()
-
     # ========================================
     # iii) Cumulative cost (Hedged, Unhedged)
     # ========================================
@@ -718,7 +767,7 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
 
     plt.title("Cumulative Procurement Cost (Hedged vs Unhedged)")
     plt.tight_layout()
-    plt.savefig(f"{prefix}-3_cumulative_cost.png", dpi=150)
+    # plt.savefig(f"{prefix}-3_cumulative_cost.png", dpi=150)
     plt.show()
 
     # =========================
@@ -736,7 +785,7 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
 
     plt.title("Storage (On-hand P) and Net Inventory S")
     plt.tight_layout()
-    plt.savefig(f"{prefix}-4_storage_alt.png", dpi=150)
+    # plt.savefig(f"{prefix}-4_storage_alt.png", dpi=150)
     plt.show()
 
     print("Saved:")
@@ -750,3 +799,14 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
 
 if __name__ == "__main__":
     plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig")
+    # For the lead-time-0 solution
+    costs0 = compute_cost_breakdown(sol0, price_df, h=5.0, b=None)
+    print(costs0)
+
+    # For the unhedged-only (lead-time) solution with backlog penalty b=50
+    costsU = compute_cost_breakdown(solU, price_df, h=5.0, b=50.0)
+    print(costsU)
+
+    # For the full matrix solution 'sol' (both suppliers optimized)
+    costs_full = compute_cost_breakdown(sol, price_df, h=5.0, b=20.0)
+    print(costs_full)
