@@ -455,12 +455,164 @@ orders_df = pd.concat(
     [sol0["Q_fixed_hedged"], sol0["Qhat_unhedged"]],
     axis=1
 )
-orders_df.to_csv("optimized_orders.csv", index=False)
+# orders_df.to_csv("optimized_orders.csv", index=False)
+
+def deterministic_reschedule_unhedged_L0_lock_prefix(
+    Q_star_df: pd.DataFrame,    # T x 2 with columns ["Hedged","Unhedged"] (AI plan)
+    price_df: pd.DataFrame,     # T x 2 with same columns
+    capacity_df: pd.DataFrame,  # T x 2 with same columns
+    demand: np.ndarray,         # length T
+    k: int = 4,                 # lock the first k months of Unhedged to the original plan
+    s_max: float = 12000.0,     # per-period on-hand storage cap
+    h: float = 5.0,             # holding cost per unit per period
+    I0: float = 0.0,            # initial on-hand inventory
+    no_backlog: bool = True,    # enforce no backorders (recommended for L=0)
+    solver=cp.CLARABEL,
+    verbose: bool = False,
+):
+    """
+    Lead time = 0 model with prefix lock:
+      - Hedged schedule is fixed to Q_star_df['Hedged'].
+      - Unhedged is fixed for the first k periods to Q_star_df['Unhedged'].
+      - Optimize only Unhedged for periods k..T-1.
+      - Objective: minimize procurement cost (Unhedged) + holding cost (storage).
+      - Enforce per-period storage cap s_max.
+      - Default: no backlog allowed.
+
+    Returns dict with objective, optimized Unhedged, stock P, etc.
+    """
+    # ---------- checks ----------
+    required_cols = ["Hedged", "Unhedged"]
+    for df_ in (Q_star_df, price_df, capacity_df):
+        if list(df_.columns) != required_cols:
+            raise ValueError(f"Columns must be exactly {required_cols}.")
+        for c in df_.columns:
+            df_[c] = pd.to_numeric(df_[c], errors="coerce")
+
+    d = np.asarray(demand, dtype=float).reshape(-1)
+    T = len(Q_star_df)
+    if d.size != T:
+        raise ValueError("demand length must equal the planning horizon T.")
+    if not (0 <= k <= T):
+        raise ValueError("k must be between 0 and T inclusive.")
+
+    # constants
+    QH = Q_star_df["Hedged"].to_numpy(float)       # fixed hedged orders
+    QU_fix_prefix = Q_star_df["Unhedged"].to_numpy(float)  # used to lock first k periods
+    PU = price_df["Unhedged"].to_numpy(float)      # price for unhedged
+    PH = price_df["Hedged"].to_numpy(float)        # price for hedged (constant part)
+    CU = capacity_df["Unhedged"].to_numpy(float)   # capacity for unhedged
+
+    # ---------- variables ----------
+    QU = cp.Variable(T, nonneg=True, name="Q_unhedged")  # decision: unhedged orders
+    S  = cp.Variable(T, name="S")                        # net inventory
+    P  = cp.Variable(T, nonneg=True, name="P")           # on-hand
+    N  = cp.Variable(T, nonneg=True, name="N")           # backlog (used if no_backlog=False)
+
+    cons = []
+
+    # ---------- prefix lock for Unhedged ----------
+    if k > 0:
+        # exactly match original Unhedged for first k periods
+        cons += [QU[:k] == QU_fix_prefix[:k]]
+        # sanity: ensure locked values do not exceed capacity in those periods
+        # (if they do, the problem becomes infeasible)
+        cons += [QU[:k] <= CU[:k]]
+    # remaining periods are free (subject to capacity)
+    if k < T:
+        cons += [QU[k:] <= CU[k:]]
+
+    # ---------- inventory dynamics (L=0): orders impact immediately ----------
+    cons += [S[0] == float(I0) + (QH[0] + QU[0]) - d[0]]
+    for t in range(1, T):
+        cons += [S[t] == S[t-1] + (QH[t] + QU[t]) - d[t]]
+
+    if no_backlog:
+        cons += [S == P]     # S=P, N=0
+        cons += [N == 0]
+        cons += [P >= 0]
+    else:
+        cons += [S == P - N]
+
+    # ---------- storage cap ----------
+    cons += [P <= s_max]
+
+    # ---------- objective ----------
+    # Hedged purchase is constant; Unhedged is variable
+    purchase_cost = cp.sum(cp.multiply(PU, QU)) + float(np.dot(PH, QH))
+    holding_cost  = h * cp.sum(P)
+    obj = cp.Minimize(purchase_cost + holding_cost)
+
+    # ---------- solve ----------
+    prob = cp.Problem(obj, cons)
+    prob.solve(solver=solver, verbose=verbose)
+    if prob.status not in ("optimal", "optimal_inaccurate"):
+        raise RuntimeError(f"L0 unhedged reschedule (prefix lock) failed: status={prob.status}")
+
+    # ---------- package ----------
+    ThetaH = QH.copy()  # L=0 → arrivals == orders
+    ThetaU = np.asarray(QU.value).reshape(-1)
+
+    out = {
+        "objective": float(prob.value),
+        "Qhat_unhedged": pd.Series(ThetaU, name="Unhedged"),
+        "Q_fixed_hedged": pd.Series(QH, name="Hedged"),
+        "Theta_unhedged": pd.Series(ThetaU, name="Theta_Unhedged"),
+        "Theta_hedged": pd.Series(ThetaH, name="Theta_Hedged"),
+        "S": pd.Series(np.asarray(S.value).reshape(-1), name="S"),
+        "P": pd.Series(np.asarray(P.value).reshape(-1), name="P"),
+        "N": pd.Series(np.asarray(N.value).reshape(-1), name="N"),
+        "max_storage": float(np.max(P.value)),
+        "purchase_cost": float(np.sum(PU * ThetaU) + np.dot(PH, QH)),
+        "holding_cost": float(h * np.sum(np.asarray(P.value).reshape(-1))),
+        "k_locked": int(k),
+    }
+    return out
+
 
 
 # Choose your solution dict here (sol0 for L=0 model, or solU for the lead-time model)
-sol = sol0   # or: sol = solU
+  # or: sol = solU
 
+# Existing solution (all months free)
+sol0 = deterministic_reschedule_unhedged_L0(
+    Q_star_df=Q_star_df,
+    price_df=price_df,
+    capacity_df=capacity_df,
+    demand=demand,
+    s_max=12000,
+    h=5.0,
+    I0=1000.0,
+    no_backlog=True,
+    solver=cp.CLARABEL,
+    verbose=False
+)
+
+# New solution: first k months of Unhedged are fixed to the original plan
+sol0_lock = deterministic_reschedule_unhedged_L0_lock_prefix(
+    Q_star_df=Q_star_df,
+    price_df=price_df,
+    capacity_df=capacity_df,
+    demand=demand,
+    k=4,                   # change to compare different lock lengths
+    s_max=12000,
+    h=5.0,
+    I0=1000.0,
+    no_backlog=True,
+    solver=cp.CLARABEL,
+    verbose=False
+)
+
+print("Objective (all free):", sol0["objective"])
+print("Objective (first 4 locked):", sol0_lock["objective"])
+
+# Save to compare
+pd.concat([sol0["Q_fixed_hedged"], sol0["Qhat_unhedged"]], axis=1)\
+  .to_csv("optimized_orders_all_free.csv", index=False)
+pd.concat([sol0_lock["Q_fixed_hedged"], sol0_lock["Qhat_unhedged"]], axis=1)\
+  .to_csv("optimized_orders_first_k_locked.csv", index=False)
+
+sol = sol0_lock
 # Extract series (they are pandas.Series)
 hedged   = sol["Q_fixed_hedged"]      # Hedged orders (fixed)
 unhedged = sol["Qhat_unhedged"]       # Unhedged orders (optimized)
@@ -473,18 +625,17 @@ t = np.arange(T)
 def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
     """
     Makes:
-      i)  fig-1  : Orders as stacked bars (Hedged/Unhedged) + prices on secondary y (dotted lines)
-      ii) fig-22 : Storage (on-hand P) over time with cap line
-      iii) fig-3 : Cumulative cost (Hedged vs Unhedged) over time
-      iv)  fig-4 : Storage again (P and Net S), useful if you want both views
-
-    Saves PNGs and also shows them.
+      i)  fig-1  : Orders (side-by-side bars Hedged/Unhedged) + prices (dotted, secondary axis)
+      ii) fig-22 : Storage (on-hand P) vs cap
+      iii) fig-3 : Cumulative procurement cost (Hedged vs Unhedged)
+      iv)  fig-4 : Storage (P and Net S)
     """
+  
     # Extract series from solution dict
-    QH = sol["Q_fixed_hedged"].to_numpy(float)       # hedged orders per period
-    QU = sol["Qhat_unhedged"].to_numpy(float)        # unhedged orders per period (optimized)
-    P  = sol["P"].to_numpy(float)                    # on-hand stock
-    S  = sol["S"].to_numpy(float)                    # net stock (P - N)
+    QH = sol["Q_fixed_hedged"].to_numpy(float)
+    QU = sol["Qhat_unhedged"].to_numpy(float)
+    P  = sol["P"].to_numpy(float)
+    S  = sol["S"].to_numpy(float)
     T  = len(QH)
     t  = np.arange(T)
 
@@ -492,10 +643,13 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
     PH = price_df["Hedged"].to_numpy(float)
     PU = price_df["Unhedged"].to_numpy(float)
 
+    # --------- NEW: x-axis date labels Apr-25 ... Mar-26 ----------
+    start = pd.Timestamp("2025-04-01")         # Apr-25
+    months = pd.date_range(start, periods=T, freq="MS")
+    xlabels = months.strftime("%b-%y")         # e.g., Apr-25, May-25, ...
+    # ---------------------------------------------------------------
+
     # =========================
-    # i) Orders bars + prices
-    # =========================
-        # =========================
     # i) Orders bars side-by-side + prices dotted
     # =========================
     width = 0.35
@@ -503,14 +657,18 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
 
     ax1.bar(t - width/2, QH, width=width, label="Hedged Order")
     ax1.bar(t + width/2, QU, width=width, label="Unhedged Order")
-    ax1.set_xlabel("Period"); ax1.set_ylabel("Orders")
+    ax1.set_ylabel("Orders")
     ax1.grid(True, alpha=0.3)
 
     # Price lines on secondary axis
     axp = ax1.twinx()
-    axp.plot(t, PH, linestyle=":", linewidth=2, color="tab:blue",  label="Hedged Price")
-    axp.plot(t, PU, linestyle=":", linewidth=2, color="tab:orange", label="Unhedged Price")
+    axp.plot(t, PH, linestyle=":", linewidth=2, label="Hedged Price")
+    axp.plot(t, PU, linestyle=":", linewidth=2, label="Unhedged Price")
     axp.set_ylabel("Price")
+
+    # X ticks as months
+    ax1.set_xticks(t)
+    ax1.set_xticklabels(xlabels, rotation=45, ha="right")
 
     # combine legends
     lines, labels = [], []
@@ -524,22 +682,25 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
     plt.savefig(f"{prefix}-1_orders_prices.png", dpi=150)
     plt.show()
 
-
     # =========================
     # ii) Storage (on-hand P)
     # =========================
     fig2, ax2 = plt.subplots(figsize=(10, 4))
     ax2.plot(t, P, linewidth=2, label="Stock (on-hand P)")
     ax2.axhline(s_max, linestyle="--", linewidth=1.5, label=f"Cap = {s_max:g}")
-    ax2.set_xlabel("Period"); ax2.set_ylabel("Units")
+    ax2.set_ylabel("Units")
     ax2.grid(True, alpha=0.3); ax2.legend()
+
+    ax2.set_xticks(t)
+    ax2.set_xticklabels(xlabels, rotation=45, ha="right")
+
     plt.title("Storage (On-hand P) vs Cap")
-    plt.tight_layout(); plt.savefig(f"{prefix}-22_storage.png", dpi=150)
+    plt.tight_layout()
+    plt.savefig(f"{prefix}-22_storage.png", dpi=150)
     plt.show()
 
     # ========================================
     # iii) Cumulative cost (Hedged, Unhedged)
-    # (uses orders * price per period; no lead-time shift)
     # ========================================
     cost_H = PH * QH
     cost_U = PU * QU
@@ -549,10 +710,16 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
     fig3, ax3 = plt.subplots(figsize=(10, 4))
     ax3.plot(t, cum_H, linewidth=2, label="Cumulative Hedged Cost")
     ax3.plot(t, cum_U, linewidth=2, label="Cumulative Unhedged Cost")
-    ax3.set_xlabel("Period"); ax3.set_ylabel("Cost")
+    ax3.set_ylabel("Cost")
     ax3.grid(True, alpha=0.3); ax3.legend()
+
+    ax3.set_xticks(t)
+    ax3.set_xticklabels(xlabels, rotation=45, ha="right")
+
     plt.title("Cumulative Procurement Cost (Hedged vs Unhedged)")
-    plt.tight_layout(); plt.savefig(f"{prefix}-3_cumulative_cost.png", dpi=150); plt.show()
+    plt.tight_layout()
+    plt.savefig(f"{prefix}-3_cumulative_cost.png", dpi=150)
+    plt.show()
 
     # =========================
     # iv) Storage (alt view)
@@ -561,10 +728,15 @@ def plot_procurement_figs(sol, price_df, s_max=12000.0, prefix="fig"):
     ax4.plot(t, P, linewidth=2, label="On-hand P")
     ax4.plot(t, S, linewidth=1.8, label="Net S (=P-N)")
     ax4.axhline(s_max, linestyle="--", linewidth=1.5, label=f"Cap = {s_max:g}")
-    ax4.set_xlabel("Period"); ax4.set_ylabel("Units")
+    ax4.set_ylabel("Units")
     ax4.grid(True, alpha=0.3); ax4.legend()
+
+    ax4.set_xticks(t)
+    ax4.set_xticklabels(xlabels, rotation=45, ha="right")
+
     plt.title("Storage (On-hand P) and Net Inventory S")
-    plt.tight_layout(); plt.savefig(f"{prefix}-4_storage_alt.png", dpi=150)
+    plt.tight_layout()
+    plt.savefig(f"{prefix}-4_storage_alt.png", dpi=150)
     plt.show()
 
     print("Saved:")
