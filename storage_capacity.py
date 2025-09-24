@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 # -----------------------------
 # 1) Load & align input frames
 # -----------------------------
-df = pd.read_csv("capacity_opt2509.csv")
+df = pd.read_csv("capacity_opt2505.csv")
 
 # Optional storage cap to draw (set to your actual cap)
 s_max = 12000.0
@@ -54,7 +54,7 @@ def deterministic_reschedule_with_capacity(
     h: float, b: float,         # holding & backlog unit costs
     I0: float, B0: float,       # initial inventory & backlog
     force_arrival_within_horizon: bool = True,
-    solver=cp.ECOS,
+    solver=cp.CLARABEL,
     verbose: bool = False,
 ):
     # shape checks
@@ -109,6 +109,9 @@ def deterministic_reschedule_with_capacity(
     # -------------------- decomposition & storage cap --------------------
     cons += [Svar == Ppos - Nneg]
     cons += [Ppos <= s_max]  # hard per-period bound on storage
+    for t in range(T-1):
+        cons.append(Ppos[t] <= s_max)
+  
 
     # -------------------- per-period supplier capacity --------------------
     cons.append(Qhat <= Cmat)  # elementwise
