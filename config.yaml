@@ -1,0 +1,63 @@
+
+
+# Choose distribution to use
+distribution_name: beta
+
+# Define parameter sets for all supported distributions
+distributions:
+  lognormal:
+    mean1: 3.8
+    sigma1: 0.25
+    mean2: 4.0
+    sigma2: 0.3
+
+  gamma:
+    shape1: 2.0
+    scale1: 22.0
+    shape2: 2.5
+    scale2: 25.0
+
+  normal:
+    mean1: 45
+    std1: 5
+    mean2: 50
+    std2: 6
+
+  pareto:
+    alpha1: 3.0
+    scale1: 40.0
+    alpha2: 2.5
+    scale2: 45.0
+
+  triangular:
+    left1: 40
+    mode1: 45
+    right1: 50
+    left2: 42
+    mode2: 48
+    right2: 55
+
+  weibull:
+    a1: 1.5
+    scale1: 50.0
+    a2: 1.2
+    scale2: 55.0
+
+  beta:
+    a1: 2.0
+    b1: 5.0
+    scale1: 100
+    a2: 2.5
+    b2: 4.5
+    scale2: 110
+
+# Common SAA problem setup
+problem:
+  T: 12
+  N: 20
+  seed: 42
+  h: 5
+  b: 20
+  I_0: 6000
+  B_0: 0
+  enforce_fixed_orders: true
