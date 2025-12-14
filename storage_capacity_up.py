@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 # -----------------------------
 # 1) Load & align input frames
 # -----------------------------
-df = pd.read_csv("capacity_opt2509.csv")
+df = pd.read_csv("capacity_opt2510.csv")
 
 # Optional storage cap to draw (set to your actual cap)
 s_max = 12000.0

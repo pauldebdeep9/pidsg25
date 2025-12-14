@@ -30,9 +30,10 @@ def plot_order_placement_bar(order_placement, start_date="2024-01-01"):
     plt.tight_layout()
     plt.show()
 
-def plot_price_distribution_band(price_df_s1, price_df_s2, start_date="2024-01-01", quantiles=(0.1, 0.9)):
+def plot_price_distribution_band(price_df_s1, price_df_s2, order_placed=None, start_date="2024-01-01", quantiles=(0.1, 0.9)):
     """
-    Plots shaded band of price distribution over time for each supplier.
+    Plots discrete bars showing price intervals for each time period for each supplier,
+    with optional order quantities as line plots on a secondary axis.
 
     Parameters:
     -----------
@@ -41,6 +42,9 @@ def plot_price_distribution_band(price_df_s1, price_df_s2, start_date="2024-01-0
 
     price_df_s2 : pd.DataFrame
         Price samples for supplier 2
+
+    order_placed : pd.DataFrame, optional
+        DataFrame with columns ['s1', 's2'] containing order quantities
 
     start_date : str
         Date string for start of time index
@@ -51,23 +55,70 @@ def plot_price_distribution_band(price_df_s1, price_df_s2, start_date="2024-01-0
     T = price_df_s1.shape[0]
     time_index = pd.date_range(start=start_date, periods=T, freq='MS')
 
-    def plot_band(ax, df, label, color):
-        mean = df.mean(axis=1)
-        q_low = df.quantile(quantiles[0], axis=1)
-        q_high = df.quantile(quantiles[1], axis=1)
-        ax.plot(time_index, mean, label=f"{label} Mean", color=color)
-        ax.fill_between(time_index, q_low, q_high, alpha=0.3, color=color, label=f"{label} {int(quantiles[0]*100)}–{int(quantiles[1]*100)}%")
+    # Calculate statistics for both suppliers
+    mean_s1 = price_df_s1.mean(axis=1).values
+    q_low_s1 = price_df_s1.quantile(quantiles[0], axis=1).values
+    q_high_s1 = price_df_s1.quantile(quantiles[1], axis=1).values
+    
+    mean_s2 = price_df_s2.mean(axis=1).values
+    q_low_s2 = price_df_s2.quantile(quantiles[0], axis=1).values
+    q_high_s2 = price_df_s2.quantile(quantiles[1], axis=1).values
 
     fig, ax = plt.subplots(figsize=(14, 6))
-    plot_band(ax, price_df_s1, "Supplier 1", "#1f77b4")  # blue
-    plot_band(ax, price_df_s2, "Supplier 2", "#ff7f0e")  # orange
+    
+    # Bar width and positions
+    bar_width = 8  # days
+    offset = pd.Timedelta(days=bar_width * 0.6)
+    
+    # Plot bars for supplier 1 (Unhedged) - showing the range from q_low to q_high
+    for i, date in enumerate(time_index):
+        height_s1 = q_high_s1[i] - q_low_s1[i]
+        ax.bar(date - offset, height_s1, width=bar_width, bottom=q_low_s1[i],
+               alpha=0.6, color='#1f77b4', edgecolor='black', linewidth=0.5)
+        # Add mean marker
+        ax.plot(date - offset, mean_s1[i], marker='o', markersize=6, color='darkblue')
+    
+    # Plot bars for supplier 2 (Hedged)
+    for i, date in enumerate(time_index):
+        height_s2 = q_high_s2[i] - q_low_s2[i]
+        ax.bar(date + offset, height_s2, width=bar_width, bottom=q_low_s2[i],
+               alpha=0.6, color='#ff7f0e', edgecolor='black', linewidth=0.5)
+        # Add mean marker
+        ax.plot(date + offset, mean_s2[i], marker='s', markersize=6, color='darkorange')
+    
+    # Create legend manually
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Patch(facecolor='#1f77b4', alpha=0.6, edgecolor='black', label=f'Unhedged {int(quantiles[0]*100)}-{int(quantiles[1]*100)}%'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='darkblue', markersize=8, label='Unhedged Mean'),
+        Patch(facecolor='#ff7f0e', alpha=0.6, edgecolor='black', label=f'Hedged {int(quantiles[0]*100)}-{int(quantiles[1]*100)}%'),
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='darkorange', markersize=8, label='Hedged Mean')
+    ]
 
-    ax.set_title("Price Distribution Bands Over Time")
+    # If order quantities are provided, plot them on secondary axis
+    if order_placed is not None:
+        ax2 = ax.twinx()
+        ax2.plot(time_index, order_placed['s1'].values, marker='o', linestyle='-', 
+                linewidth=2, markersize=8, color='#1f77b4', label='Unhedged Orders')
+        ax2.plot(time_index, order_placed['s2'].values, marker='s', linestyle='-', 
+                linewidth=2, markersize=8, color='#ff7f0e', label='Hedged Orders')
+        ax2.set_ylabel("Order Quantity", fontsize=11)
+        ax2.grid(False)
+        
+        # Add order lines to legend
+        legend_elements.extend([
+            Line2D([0], [0], marker='o', color='#1f77b4', linewidth=2, markersize=8, label='Unhedged Orders'),
+            Line2D([0], [0], marker='s', color='#ff7f0e', linewidth=2, markersize=8, label='Hedged Orders')
+        ])
+
+    ax.set_title("Price Distribution Bands and Order Quantities Over Time")
     ax.set_xlabel("Month")
     ax.set_ylabel("Price")
-    ax.grid(True)
-    ax.legend()
-    plt.xticks(rotation=45, ha='right')
+    ax.grid(True, alpha=0.3)
+    ax.legend(handles=legend_elements, loc='upper left')
+    ax.set_xticks(time_index)
+    ax.set_xticklabels(time_index.strftime('%Y-%m'), rotation=45, ha='right')
     plt.tight_layout()
     plt.show()
 

@@ -3,6 +3,7 @@
 import pandas as pd
 import numpy as np
 import yaml
+import matplotlib.pyplot as plt
 
 # from ClassData import ProcurementConfig, ModelData  # Commented out as not used
 from model import solve_price_saa
@@ -50,6 +51,9 @@ demand_df   = pd.read_excel(xls, sheet_name="demand",   index_col=0)
 supplier_df = pd.read_excel(xls, sheet_name="supplier")          # has columns: supplier, lead_time, order_cost
 capacity_df = pd.read_excel(xls, sheet_name="capacity", index_col=0)
 
+# Load p2normal sheet for flat prices for supplier s2
+p2normal_df = pd.read_excel(xls, sheet_name="p2normal", index_col=0)
+
 # -------------------- Fixed demand & sets --------------------
 fixed_demand = demand_df["Actual"].dropna().values
 T = len(fixed_demand)               # authoritative horizon - use actual demand length
@@ -57,6 +61,15 @@ T = len(fixed_demand)               # authoritative horizon - use actual demand 
 # -------------------- Synthetic price samples --------------------
 generator = PriceDistributionGenerator(T=T, N=N, seed=42)
 price_df_s1, price_df_s2 = generator.generate_by_name(dist=dist_name, params=distribution_params)
+
+# Replace s2 prices with flat prices from p2normal sheet
+# Create a DataFrame with flat prices for s2 (all samples have the same price)
+p2_flat_prices = p2normal_df.iloc[:T, 0].values  # Take first column which has the flat prices
+price_df_s2_flat = pd.DataFrame(
+    np.tile(p2_flat_prices.reshape(-1, 1), (1, N)),  # Repeat the flat prices for all N samples
+    index=range(T),
+    columns=range(N)
+)
 S = supplier_df["supplier"].tolist()
 lead_time = dict(zip(supplier_df["supplier"], supplier_df["lead_time"]))
 lead_time_s2 = int(lead_time["s2"])
@@ -81,7 +94,7 @@ for i in range(N):
     sample_prices = {}
     for t in range(T):
         sample_prices[(t, "s1")] = float(price_df_s1.iloc[t, i])
-        sample_prices[(t, "s2")] = float(price_df_s2.iloc[t, i])
+        sample_prices[(t, "s2")] = float(price_df_s2_flat.iloc[t, i])  # Use flat prices for s2
     price_samples.append(sample_prices)
 
 # -------------------- Costs & capacities --------------------
@@ -139,13 +152,13 @@ order_placed["s2"] = s2_aligned.values  # safe: length T
 START_DATE = "2025-08-01"
 
 plot_order_placement_bar(order_placed, start_date=START_DATE)
-plot_price_distribution_band(price_df_s1, price_df_s2, start_date=START_DATE)
+plot_price_distribution_band(price_df_s1, price_df_s2_flat, start_date=START_DATE)
 plot_price_and_orders(price_df_s1, order_placed, supplier="s1", start_date=START_DATE)
-plot_price_and_orders(price_df_s2, order_placed, supplier="s2", start_date=START_DATE)
+plot_price_and_orders(price_df_s2_flat, order_placed, supplier="s2", start_date=START_DATE)  # Use flat prices
 
 # Deterministic plot: pass a DatetimeIndex Series so the plotting helper has dates + length T
 idx = pd.date_range(START_DATE, periods=T, freq="MS")
-mean_price_s2_series = pd.Series(price_df_s2.iloc[:T, 0].to_numpy(), index=idx)
+mean_price_s2_series = pd.Series(price_df_s2_flat.iloc[:T, 0].to_numpy(), index=idx)  # Use flat prices
 plot_price_and_orders_deterministic(mean_price_s2_series, order_placed, supplier="s2")
 
 # -------------------- Save & cost breakdown --------------------
@@ -160,3 +173,18 @@ cost = Cost(df_result, order_placed, initial_inventory=I_0, demand=fixed_demand)
 inv_cost, backlog_cost = cost.compute_inventory_backlog_cost(h, b)
 print("Storage cost", inv_cost)
 print("Backlog cost", backlog_cost)
+
+# -------------------- Plot inventory cost over time --------------------
+
+# Create date index for inventory cost plot
+date_index = pd.date_range(START_DATE, periods=len(inv_cost), freq="MS")
+
+plt.figure(figsize=(12, 6))
+plt.plot(date_index, inv_cost/50000, marker='o', linewidth=2, markersize=6, color='tab:green')
+plt.title("Inventory Cost Over Time")
+plt.xlabel("Date")
+plt.ylabel("Months of Inventory")
+plt.grid(True, alpha=0.3)
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()

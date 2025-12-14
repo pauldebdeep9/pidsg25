@@ -7,11 +7,11 @@ import matplotlib.pyplot as plt
 # -----------------------------
 # 1) Load & align input frames
 # -----------------------------
-df = pd.read_csv("capacity_opt2509.csv")
+df = pd.read_csv("capacity_opt2510_dum.csv")
 
 # Storage bounds
 s_max = 12000.0   # upper bound on on-hand inventory per period
-s_min = 0    # lower bound (safety stock). Can be scalar or length-T vector.
+s_min = 1000    # lower bound (safety stock). Can be scalar or length-T vector.
 
 # canonical supplier labels
 SUPPLIERS = ["Hedged", "Unhedged"]
