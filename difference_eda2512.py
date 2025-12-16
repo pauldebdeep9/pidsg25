@@ -266,7 +266,7 @@ def plot_dashboard(df: pd.DataFrame, label: str, out_prefix: str):
     ax_main.set_xticklabels(month_labels, rotation=45, ha="right")
 
     ax_main.set_ylabel("Cumulative deviation (units)")
-    ax_right.set_ylabel("Rolling %Δ vs Aug (%)")
+    ax_right.set_ylabel("Rolling %Δ vs Sep (%)")
     ax_main.set_title("Cumulative Deviation & Smoothed % Change")
     ax_main.grid(alpha=0.3)
 
@@ -381,7 +381,7 @@ def plot_dashboard(df: pd.DataFrame, label: str, out_prefix: str):
         )
 
     ax_hm.set_yticks([0])
-    ax_hm.set_yticklabels(["%Δ Sep vs Aug"])
+    ax_hm.set_yticklabels(["%Δ Nov vs Sep"])
     ax_hm.set_xticks(x)
     ax_hm.set_xticklabels(month_labels, rotation=45, ha="right")
     ax_hm.set_title(f"Heatmap of % Change vs {OLDER_LABEL}")
@@ -406,7 +406,7 @@ def headline(df, name):
     max_dn_idx = df["AbsDiff"].idxmin()
 
     print(f"\n=== {name} summary ===")
-    print(f"Total Δ (Sep-Aug): {total_abs_dev:.1f} units")
+    print(f"Total Δ (Nov-Sep): {total_abs_dev:.1f} units")
 
     print(
         "Max upward revision: "

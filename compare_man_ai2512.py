@@ -30,6 +30,11 @@ BAR_SERIES: Sequence[tuple[str, str]] = (
     ("Order-AI-3-Unhed", "AI Unhedged"),
 )
 
+AI_COLOR = "tab:green"
+MANUAL_COLOR = "tab:purple"
+LINE_AI_COLOR = "tab:blue"
+LINE_MANUAL_COLOR = "tab:orange"
+
 
 def _first_numeric_col(df: pd.DataFrame) -> pd.Series:
     """Return the first numeric column as a Series (raises if none)."""
@@ -56,8 +61,14 @@ def load_main12_prices(path: Path = MAIN12_SOURCE) -> tuple[pd.Series, pd.Series
     return unhedged, hedged
 
 
-def load_data(path: Path = EXCEL_PATH, sheet: str = SHEET_NAME) -> pd.DataFrame:
-    """Load and lightly clean the sheet; compute procurement costs and cumulative sums."""
+def load_data(path: Path = EXCEL_PATH, sheet: str = SHEET_NAME, use_main12_prices: bool = False) -> pd.DataFrame:
+    """
+    Load and lightly clean the sheet; compute procurement costs and cumulative sums.
+
+    By default uses the hedged/unhedged prices already in the evaluation sheet so
+    procurement costs match the spreadsheet formulas. Set `use_main12_prices=True`
+    to override with the price series from main12.py.
+    """
     df = pd.read_excel(path, sheet_name=sheet)
     df = df.dropna(subset=["Date"]).copy()
     df["Date"] = pd.to_datetime(df["Date"])
@@ -71,11 +82,13 @@ def load_data(path: Path = EXCEL_PATH, sheet: str = SHEET_NAME) -> pd.DataFrame:
         else:
             raise KeyError(f"Expected column '{col}' not found in sheet '{sheet}'.")
 
-    # Replace price columns with the same series used in main12.py (first numeric column)
-    unhedged_series, hedged_series = load_main12_prices()
     df = df.set_index("Date")
-    df["Unhedged price"] = unhedged_series.reindex(df.index)
-    df["Hedged price"] = hedged_series.reindex(df.index)
+
+    if use_main12_prices:
+        # Optionally align prices with the series used by main12.py
+        unhedged_series, hedged_series = load_main12_prices()
+        df["Unhedged price"] = unhedged_series.reindex(df.index)
+        df["Hedged price"] = hedged_series.reindex(df.index)
 
     # Trim to periods where manual orders are available (stop at last non-NaN manual entry)
     manual_mask = df["Order-Manual-Hedged"].notna() | df["Order-Manual-Unhedged"].notna()
@@ -113,14 +126,24 @@ def plot_prices_and_orders(df: pd.DataFrame) -> None:
     dates = df["Date"]
     x = np.arange(len(dates))
     width = 0.18
+    bar_colors = [MANUAL_COLOR, MANUAL_COLOR, AI_COLOR, AI_COLOR]
+    hatches = ["", "//", "", "//"]
 
     fig, ax_orders = plt.subplots(figsize=(12, 6))
 
     # Bars for orders
     offsets = [-1.5, -0.5, 0.5, 1.5]
     handles = []
-    for (col, label), offset in zip(BAR_SERIES, offsets):
-        bar = ax_orders.bar(x + offset * width, df[col], width=width, label=label)
+    for (col, label), offset, color, hatch in zip(BAR_SERIES, offsets, bar_colors, hatches):
+        bar = ax_orders.bar(
+            x + offset * width,
+            df[col],
+            width=width,
+            label=label,
+            color=color,
+            hatch=hatch,
+            edgecolor="black",
+        )
         handles.append(bar)
 
     ax_orders.set_ylabel("Order quantity")
@@ -169,9 +192,21 @@ def plot_cumulative_procurement_costs(df: pd.DataFrame) -> None:
     x = np.arange(len(dates))
 
     fig, ax = plt.subplots(figsize=(12, 4.5))
-    ai_line, = ax.plot(x, df["AI cumulative procurement cost"], lw=2, marker="o", label="AI cumulative cost")
+    ai_line, = ax.plot(
+        x,
+        df["AI cumulative procurement cost"],
+        lw=2,
+        marker="o",
+        label="AI cumulative cost",
+        color=LINE_AI_COLOR,
+    )
     man_line, = ax.plot(
-        x, df["Manual cumulative procurement cost"], lw=2, marker="s", label="Manual cumulative cost"
+        x,
+        df["Manual cumulative procurement cost"],
+        lw=2,
+        marker="s",
+        label="Manual cumulative cost",
+        color=LINE_MANUAL_COLOR,
     )
 
     ax.set_xticks(x)
@@ -185,7 +220,7 @@ def plot_cumulative_procurement_costs(df: pd.DataFrame) -> None:
 
 
 def plot_storage(df: pd.DataFrame) -> None:
-    """Plot cumulative storage cost time series for AI and Manual."""
+    """Plot cumulative storage cost time series derived from the sheet columns."""
     dates = df["Date"]
     x = np.arange(len(dates))
 
@@ -196,6 +231,7 @@ def plot_storage(df: pd.DataFrame) -> None:
         lw=2,
         marker="o",
         label="Manual cumulative storage",
+        color=LINE_MANUAL_COLOR,
     )
     ai_line, = ax.plot(
         x,
@@ -203,6 +239,7 @@ def plot_storage(df: pd.DataFrame) -> None:
         lw=2,
         marker="s",
         label="AI cumulative storage",
+        color=LINE_AI_COLOR,
     )
 
     ax.set_xticks(x)
